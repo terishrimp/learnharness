@@ -9,8 +9,10 @@ import { resolveSourcePath } from "./fs-shared.ts";
  * The read tool — sources v0 (2026-09): a Node port of pi's read semantics
  * for the learner's local files. The flow is learner-owned: he pastes file
  * paths into the chat, the agent reads on its own terms (nothing is
- * auto-injected). Unrestricted local reads are the user-decided v0 scope —
- * this is a personal study harness, not a multi-tenant service.
+ * auto-injected). Reads are bounded by the readable scope in fs-shared.ts
+ * (home plus LH_FS_ROOTS, never a credential or key store): the tool
+ * auto-executes on a context that holds untrusted material, so an
+ * unrestricted reader was an injected turn's credential reader.
  *
  * Ported behaviors (mirroring pi's dist/core/tools/read.js):
  * - text files: utf-8, offset (1-indexed) / limit slicing, and the
@@ -101,7 +103,7 @@ export const readTool: AgentTool<typeof readInput> = {
 	description: `Read the contents of a file. Supports text files and images (jpg, png, gif, webp, bmp). Images are sent as attachments. For text files, output is truncated to 2000 lines or 50.0KB (whichever is hit first). Use offset/limit for large files. When you need the full file, continue with offset until complete.`,
 	parameters: readInput,
 	execute: serverExecute("read", readInput, async ({ path: rawPath, offset, limit }): Promise<string | ImageFileResult> => {
-		const absolute = resolveSourcePath(rawPath);
+		const absolute = await resolveSourcePath(rawPath);
 		const ext = path.extname(absolute).toLowerCase();
 		const mime = IMAGE_MIME[ext];
 		const buffer = await fs.readFile(absolute); // ENOENT/EACCES → error result the model sees

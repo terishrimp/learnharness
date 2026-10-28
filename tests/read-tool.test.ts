@@ -13,6 +13,11 @@ import * as path from "node:path";
 import { describe, it } from "node:test";
 import { readTool } from "../src/agent/tools/read.ts";
 
+// See fs-tools.test.ts: tmpdir sits outside the learner's home on
+// Linux/macOS, so these fixtures opt in through the LH_FS_ROOTS seam.
+// Scope refusals are covered in fs-tool-scope.test.ts.
+process.env.LH_FS_ROOTS = os.tmpdir();
+
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "lh-read-test-"));
 
 function write(name: string, content: string): string {

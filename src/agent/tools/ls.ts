@@ -30,7 +30,7 @@ export const lsTool: AgentTool<typeof lsInput> = {
 	description: `List directory contents. Returns entries sorted alphabetically, with '/' suffix for directories. Includes dotfiles. Output is truncated to ${DEFAULT_LIMIT} entries or ${formatSize(MAX_OUTPUT_BYTES)} (whichever is hit first).`,
 	parameters: lsInput,
 	execute: serverExecute("ls", lsInput, async (input) => {
-		const dirPath = resolveSourcePath(input.path);
+		const dirPath = await resolveSourcePath(input.path);
 
 		let stat;
 		try {

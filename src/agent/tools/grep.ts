@@ -53,7 +53,7 @@ export const grepTool: AgentTool<typeof grepInput> = {
 	parameters: grepInput,
 	execute: serverExecute("grep", grepInput, async (input, ctx) => {
 		if (ctx?.signal?.aborted) return "Operation aborted";
-		const searchPath = resolveSourcePath(input.path);
+		const searchPath = await resolveSourcePath(input.path);
 
 		let stat;
 		try {

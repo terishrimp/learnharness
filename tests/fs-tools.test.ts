@@ -6,6 +6,13 @@ import { describe, it } from "node:test";
 
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { expandBraces, globToRegex, matchGlob, walkFiles } from "../src/agent/tools/fs-shared.ts";
+
+// The readable scope (fs-shared.ts) anchors on the learner's home, and
+// os.tmpdir() is OUTSIDE it on Linux/macOS (/tmp, /var/folders) though
+// inside it on Windows. These fixtures live in tmpdir, so they opt in
+// through the same LH_FS_ROOTS seam a learner with notes on another drive
+// would use. Scope refusals are covered in fs-tool-scope.test.ts.
+process.env.LH_FS_ROOTS = os.tmpdir();
 import { findTool } from "../src/agent/tools/find.ts";
 import { grepTool } from "../src/agent/tools/grep.ts";
 import { lsTool } from "../src/agent/tools/ls.ts";
@@ -105,7 +112,13 @@ describe("ls (pi port)", () => {
 	});
 
 	it("missing path and non-directory throw (the model sees the error)", async () => {
-		await assert.rejects(async () => lsTool.execute!("c", { path: "/nonexistent/xyz" }), /Path not found/);
+		// Inside the readable root: the scope gate refuses an out-of-root path
+		// before any existence check (fs-tool-scope.test.ts covers that), so a
+		// missing path must be in-root to exercise the not-found branch.
+		await assert.rejects(
+			async () => lsTool.execute!("c", { path: path.join(FIXTURE, "nonexistent", "xyz") }),
+			/Path not found/,
+		);
 		await assert.rejects(
 			async () => lsTool.execute!("c", { path: path.join(FIXTURE, "binary.bin") }),
 			/Not a directory/,

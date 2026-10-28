@@ -735,6 +735,7 @@ describe("pdf runner (sources v0)", () => {
 	let home: string;
 	const originalHome = process.env.HOME;
 	const originalUserProfile = process.env.USERPROFILE;
+	const originalRoots = process.env.LH_FS_ROOTS;
 
 	before(() => {
 		home = fs.mkdtempSync(path.join(os.tmpdir(), "lh-pdf-job-home-"));
@@ -743,6 +744,11 @@ describe("pdf runner (sources v0)", () => {
 		fs.copyFileSync(PDF_FIXTURE, target);
 		process.env.HOME = home;
 		process.env.USERPROFILE = home;
+		// With home stubbed to a tmpdir, PDF_FIXTURE (in the repo) sits outside
+		// the readable scope that fs-shared.ts now enforces. A learner's PDF
+		// would be under their home; this fixture is not, so the repo dir opts
+		// in through the LH_FS_ROOTS seam. See fs-tool-scope.test.ts.
+		process.env.LH_FS_ROOTS = path.dirname(PDF_FIXTURE);
 	});
 
 	after(() => {
@@ -750,6 +756,8 @@ describe("pdf runner (sources v0)", () => {
 		else process.env.HOME = originalHome;
 		if (originalUserProfile === undefined) delete process.env.USERPROFILE;
 		else process.env.USERPROFILE = originalUserProfile;
+		if (originalRoots === undefined) delete process.env.LH_FS_ROOTS;
+		else process.env.LH_FS_ROOTS = originalRoots;
 		fs.rmSync(home, { recursive: true, force: true });
 	});
 
