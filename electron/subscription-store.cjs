@@ -14,14 +14,37 @@ function validateCredential(providerId, credential) {
 	}
 	return credential;
 }
+/** Local-only names a public enterprise host can never legitimately be. */
+const LOCAL_SUFFIXES = [".localhost", ".local", ".internal", ".home.arpa", ".lan"];
 function safeDomain(value) {
 	if (typeof value !== "string" || !value || /[\s/:@?#\\]/.test(value)) return false;
+	// An enterprise domain is a PUBLIC registrable name. Accepting a bare IP,
+	// localhost, a single label or a local suffix let the stored credential
+	// aim its own endpoint — and the Bearer refresh that precedes any
+	// endpoint check — at a host inside the learner's network.
+	if (value === "localhost" || !value.includes(".")) return false;
+	if (LOCAL_SUFFIXES.some((suffix) => value.toLowerCase().endsWith(suffix))) return false;
+	if (require("node:net").isIP(value) !== 0) return false;
 	try { return new URL(`https://${value}`).hostname === value; } catch { return false; }
 }
 function safeHttps(value) {
 	try {
 		const url = new URL(value);
 		return url.protocol === "https:" && !url.username && !url.password;
+	} catch { return false; }
+}
+/** Schemes the app will hand to the OS when the trusted window navigates
+ *  away or opens a link. Everything else is refused: `file:`/`smb:` leak
+ *  NTLM credentials on Windows, `ms-msdt:` and friends reach OS handlers,
+ *  and the targets can come from model-authored transcript links. The
+ *  subscription openers next door have always checked; these did not. */
+const EXTERNAL_SCHEMES = new Set(["https:", "http:", "mailto:"]);
+function safeExternalTarget(value) {
+	if (typeof value !== "string" || value.length === 0) return false;
+	try {
+		const url = new URL(value);
+		if (!EXTERNAL_SCHEMES.has(url.protocol)) return false;
+		return url.protocol === "mailto:" || (!url.username && !url.password);
 	} catch { return false; }
 }
 function validateState(providerId, state) {
@@ -61,4 +84,4 @@ function fileStore(file, providerId, io = fs) {
 		},
 	};
 }
-module.exports = { PROVIDERS, failure, validateCredential, validateState, safeDomain, safeHttps, fileStore };
+module.exports = { PROVIDERS, failure, validateCredential, validateState, safeDomain, safeHttps, safeExternalTarget, fileStore };

@@ -4,6 +4,7 @@ import { Type } from "typebox";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { serverExecute } from "../tool-execute.ts";
 import { pdfExtract, pdfInfo, pdfProbe, pdfSearch } from "../subagents/pdf-ops.ts";
+import { EgressBlockedError, guardedFetch, type Resolver } from "./egress.ts";
 
 /**
  * PDF reading tools for the RESEARCHER sub-agent (owner design B,
@@ -75,7 +76,9 @@ export interface PdfFetchSummary {
 	flagged_pages: number[];
 }
 
-export function createPdfReadTools(dir: string): Record<string, AgentTool<any>> {
+/** `resolve` is the egress policy's DNS seam, injected so tool tests stay
+ *  hermetic; the live runner omits it. */
+export function createPdfReadTools(dir: string, resolve?: Resolver): Record<string, AgentTool<any>> {
 	const pdfFetchInput = Type.Object({
 		url: Type.String({ description: "The PDF URL to download" }),
 	});
@@ -104,20 +107,15 @@ export function createPdfReadTools(dir: string): Record<string, AgentTool<any>> 
 			parameters: pdfFetchInput,
 			execute: serverExecute("web_fetch_pdf", pdfFetchInput, async ({ url }): Promise<PdfFetchSummary | string> => {
 				try {
-					const parsed = new URL(url);
-					if (parsed.protocol !== "http:" && parsed.protocol !== "https:")
-						throw new Error("Only http(s) URLs are supported");
-				} catch {
-					return `web_fetch_pdf failed: invalid URL "${url}"`;
-				}
-				try {
-					const resp = await fetch(url, {
+					// Same egress policy as web_fetch — this is the second tool
+					// that takes an agent-chosen host (egress.ts).
+					const resp = await guardedFetch(url, {
 						headers: {
 							"User-Agent": USER_AGENT,
 							Accept: "application/pdf,application/octet-stream,*/*",
 						},
 						signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
-					});
+					}, { resolve });
 					if (!resp.ok) throw new Error(`HTTP ${resp.status} ${resp.statusText}`);
 					const contentType = resp.headers.get("content-type") ?? "";
 					if (!/application\/pdf/i.test(contentType) && !/\.pdf(\?|$)/i.test(parsedPathname(url))) {
@@ -147,6 +145,11 @@ export function createPdfReadTools(dir: string): Record<string, AgentTool<any>> 
 					};
 					return summary;
 				} catch (err) {
+					if (err instanceof EgressBlockedError) {
+						return err.malformed
+							? `web_fetch_pdf failed: invalid URL "${url}"`
+							: `web_fetch_pdf refused ${url}: ${err.message}`;
+					}
 					return `web_fetch_pdf failed for ${url}: ${err instanceof Error ? err.message : String(err)}`;
 				}
 			}),

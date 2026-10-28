@@ -8,6 +8,7 @@ export type { WebSearchResult };
 import { Readability } from "@mozilla/readability";
 import { parseHTML } from "linkedom";
 import TurndownService from "turndown";
+import { EgressBlockedError, guardedFetch, type Resolver } from "./egress.ts";
 
 /**
  * Server-side web tools for the researcher sub-agent — a minimal port of the
@@ -80,15 +81,17 @@ function htmlToMarkdown(html: string): { title: string; content: string } | null
 	return { title: article.title ?? "", content: markdown };
 }
 
-async function fetchAndExtract(url: string): Promise<string> {
-	const resp = await fetch(url, {
+async function fetchAndExtract(url: string, resolve?: Resolver): Promise<string> {
+	// guardedFetch, not fetch: the host is the agent's choice, and redirects
+	// are re-checked per hop (egress.ts).
+	const resp = await guardedFetch(url, {
 		headers: {
 			"User-Agent": USER_AGENT,
 			Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
 			"Accept-Language": "en-US,en;q=0.9",
 		},
 		signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
-	});
+	}, { resolve });
 	if (!resp.ok) throw new Error(`HTTP ${resp.status} ${resp.statusText}`);
 
 	// Final URL after redirects + status — the researcher's only way to
@@ -135,7 +138,13 @@ const webFetchInput = Type.Object({
 	url: Type.String({ description: "The URL to fetch" }),
 });
 
-export function createWebTools(search: () => SearchProvider | null): Record<string, AgentTool<any>> {
+/** `resolve` is the DNS seam of the egress policy, injected like every other
+ *  dependency in this layer so tool tests stay hermetic (no resolver, no
+ *  network) and the live runner simply omits it. */
+export function createWebTools(
+	search: () => SearchProvider | null,
+	resolve?: Resolver,
+): Record<string, AgentTool<any>> {
 	return {
 		web_search: {
 			name: "web_search",
@@ -168,19 +177,21 @@ export function createWebTools(search: () => SearchProvider | null): Record<stri
 			parameters: webFetchInput,
 			execute: serverExecute("web_fetch", webFetchInput, async ({ url }): Promise<string> => {
 				try {
-					const parsed = new URL(url);
-					// URL.protocol carries a TRAILING COLON ("https:", WHATWG) — the
-					// colon-less comparison born from the py-harness port (urlparse's
-					// scheme has NO colon) rejected every valid URL ever fetched
-					// (owner-reported via OpenRouter logs, 2026-10-07).
-					if (parsed.protocol !== "http:" && parsed.protocol !== "https:")
-						throw new Error("Only http(s) URLs are supported");
-				} catch {
-					return `web_fetch failed: invalid URL "${url}"`;
-				}
-				try {
-					return await fetchAndExtract(url);
+					// Scheme, host and every redirect hop are checked in egress.ts.
+					// The protocol test used to live here; note URL.protocol carries
+					// a TRAILING COLON ("https:", WHATWG) — the colon-less comparison
+					// born from the py-harness port (urlparse's scheme has NO colon)
+					// rejected every valid URL ever fetched (owner-reported via
+					// OpenRouter logs, 2026-10-07).
+					return await fetchAndExtract(url, resolve);
 				} catch (err) {
+					if (err instanceof EgressBlockedError) {
+						// A bad URL or scheme keeps the long-standing wording; only a
+						// refused DESTINATION is reported as a refusal.
+						return err.malformed
+							? `web_fetch failed: invalid URL "${url}"`
+							: `web_fetch refused ${url}: ${err.message}`;
+					}
 					return `web_fetch failed for ${url}: ${err instanceof Error ? err.message : String(err)}`;
 				}
 			}),

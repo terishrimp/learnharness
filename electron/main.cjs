@@ -28,6 +28,7 @@ const { app, BrowserWindow, Menu, ipcMain, session, shell } = require("electron"
 const { createChatGPT, fileStore } = require("./chatgpt.cjs");
 const { attachChatGPTChild, trustedSender, chatGPTControl } = require("./chatgpt-ipc.cjs");
 const { createSubscriptions, loadSubscriptionSDK } = require("./subscriptions.cjs");
+const { safeExternalTarget, safeHttps } = require("./subscription-store.cjs");
 const { attachSubscriptionChild, subscriptionControl } = require("./subscription-ipc.cjs");
 const { desktopAPIHeaders } = require("./desktop-api.cjs");
 const { openWebSubscriptionBrowser } = require("./web-subscription-browser.cjs");
@@ -366,14 +367,23 @@ function createWindow(url) {
 		return fromOwnOrigin(origin, permission);
 	});
 
+	// Off-origin targets go to the real browser — but only the schemes a link
+	// legitimately uses. The target can come from model-authored transcript
+	// content, and a bare openExternal hands any scheme to the OS handler.
+	const openExternally = (target) => {
+		if (safeExternalTarget(target)) void shell.openExternal(target);
+		else log(`refused external open for unsupported scheme: ${String(target).slice(0, 24)}`);
+	};
 	win.webContents.on("will-navigate", (event, target) => {
-		if (new URL(target).origin !== allowedOrigin()) {
+		let sameOrigin = false;
+		try { sameOrigin = new URL(target).origin === allowedOrigin(); } catch { sameOrigin = false; }
+		if (!sameOrigin) {
 			event.preventDefault();
-			void shell.openExternal(target);
+			openExternally(target);
 		}
 	});
 	win.webContents.setWindowOpenHandler(({ url: target }) => {
-		void shell.openExternal(target);
+		openExternally(target);
 		return { action: "deny" };
 	});
 
@@ -524,8 +534,16 @@ function setupAutoUpdater() {
 	}
 	const feed = process.env.LH_UPDATE_FEED;
 	if (feed) {
-		autoUpdater.setFeedURL({ provider: "generic", url: feed });
-		log(`auto-update: LH_UPDATE_FEED override → ${feed}`);
+		// An update feed delivers code that runs as the learner on next quit,
+		// and this build does not require a publisher signature (owner ruling,
+		// electron-builder.yml), so transport is the only integrity left:
+		// refuse a plain-http or credential-bearing feed rather than take it.
+		if (safeHttps(feed)) {
+			autoUpdater.setFeedURL({ provider: "generic", url: feed });
+			log(`auto-update: LH_UPDATE_FEED override → ${feed}`);
+		} else {
+			log(`auto-update: ignoring LH_UPDATE_FEED (needs https with no credentials) — keeping the default feed`);
+		}
 	}
 	autoUpdater.autoDownload = true;
 	autoUpdater.autoInstallOnAppQuit = true;

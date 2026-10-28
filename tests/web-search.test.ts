@@ -6,6 +6,9 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { createWebTools } from "../src/agent/tools/web.ts";
+// The egress policy resolves the target host (egress.ts); injecting DNS keeps
+// the fetch-stubbing tests below hermetic, as their comments promise.
+const publicDns = async () => ["93.184.216.34"];
 import { jobTools } from "../src/agent/tools/jobs.ts";
 import { runResearcherAgent } from "../src/agent/subagents/researcher.ts";
 import { createFauxCore, fauxAssistantMessage, fauxText, fauxToolCall, type FauxResponseStep } from "@earendil-works/pi-ai";
@@ -72,7 +75,7 @@ describe("web_search on the injected port (web.ts)", () => {
 	});
 
 	it("web_fetch needs no search engine — it stays independent", async () => {
-		const { web_fetch } = createWebTools(() => null);
+		const { web_fetch } = createWebTools(() => null, publicDns);
 		assert.ok(web_fetch, "web_fetch present with no provider");
 		// (Full fetch behavior is out of scope here — no network in tests.)
 		const out = await web_fetch!.execute!("c1", { url: "not a url" });
@@ -86,7 +89,7 @@ describe("web_search on the injected port (web.ts)", () => {
 		// its life (owner-reported via OpenRouter logs). This pin stubs fetch
 		// so the happy path runs hermetically: a VALID url must REACH the
 		// fetch stage.
-		const { web_fetch } = createWebTools(() => null);
+		const { web_fetch } = createWebTools(() => null, publicDns);
 		const realFetch = globalThis.fetch;
 		globalThis.fetch = (async () =>
 			new Response("A plain text page with enough content to matter for the test.", {
