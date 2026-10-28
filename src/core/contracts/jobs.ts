@@ -257,29 +257,29 @@ const CSP_META = `<meta http-equiv="Content-Security-Policy" content="${DEMO_CSP
 /**
  * Put the policy in front of the document's own content — a meta CSP governs
  * only what follows it, and it must land AFTER any doctype or the document
- * would render in quirks mode. Idempotent: a document that already carries
- * the meta is returned unchanged, so wrapping twice (verification, then
- * render) cannot stack duplicates.
+ * would render in quirks mode.
+ *
+ * UNCONDITIONAL, and that is the point. The document is model output from a
+ * brief chosen upstream, so letting it opt out — by carrying a CSP meta of
+ * its own, which an earlier version skipped on — handed an injected brief a
+ * one-line bypass of this whole control. Policies INTERSECT: every one
+ * delivered must allow a load, so our meta cannot be loosened by a
+ * permissive one the document supplies, and a duplicate costs nothing. No
+ * early return, no de-duplication, no inspection of what the document says
+ * about its own policy.
  */
 export function withDemoCSP(html: string): string {
-	if (/http-equiv=["']?Content-Security-Policy/i.test(html)) return html;
-	const afterHead = html.match(/<head\b[^>]*>/i);
-	if (afterHead?.index !== undefined) {
-		const at = afterHead.index + afterHead[0].length;
-		return html.slice(0, at) + CSP_META + html.slice(at);
-	}
-	const afterHtml = html.match(/<html\b[^>]*>/i);
-	if (afterHtml?.index !== undefined) {
-		const at = afterHtml.index + afterHtml[0].length;
-		return `${html.slice(0, at)}<head>${CSP_META}</head>${html.slice(at)}`;
-	}
-	const afterDoctype = html.match(/<!doctype[^>]*>/i);
-	if (afterDoctype?.index !== undefined) {
-		const at = afterDoctype.index + afterDoctype[0].length;
-		return html.slice(0, at) + CSP_META + html.slice(at);
-	}
-	// A bare fragment: no doctype to preserve, so the meta leads.
-	return CSP_META + html;
+	// The meta goes FIRST — immediately after the doctype, before the
+	// document's own <html>/<head>, never "just inside <head>". The parser
+	// hoists a leading <meta> into the (implicit) head, so it still counts,
+	// and it then precedes everything. Inserting after <head> instead left a
+	// real hole: a <script> written before <head> in source order is hoisted
+	// into that same head AHEAD of the meta, and ran unrestricted (verified
+	// in Chrome). The doctype must stay first or the document drops to quirks
+	// mode, so that is the only thing allowed in front.
+	const doctype = html.match(/^\s*<!doctype[^>]*>/i);
+	const at = doctype ? doctype[0].length : 0;
+	return html.slice(0, at) + CSP_META + html.slice(at);
 }
 
 export interface VisualToolInput {

