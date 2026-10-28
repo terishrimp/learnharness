@@ -87,7 +87,12 @@ const nextConfig: NextConfig = {
 			// Electron main uses the same standalone SDK; the offline runtime gate
 			// evaluates their real toAuth paths without login or provider requests.
 			"node_modules/@earendil-works/pi-ai/dist/auth/oauth/{load,anthropic,github-copilot,xai,device-code,callback-server,pkce}.js",
-			"node_modules/@earendil-works/pi-ai/dist/utils/sleep.js",
+			// The variable-imported OAuth flows above pull these in, and the
+			// tracer cannot see them either: callback-server needs oauth-page
+			// (the browser landing page) and the Anthropic flow needs
+			// provider-env. Missing, the standalone server resolves the flow
+			// and then dies on login — caught by scripts/smoke-provider-runtime.
+			"node_modules/@earendil-works/pi-ai/dist/utils/{sleep,oauth-page,provider-env}.js",
 			"node_modules/@earendil-works/pi-agent-core/dist/**/*.json",
 			// Next 16.3.2 native Turbopack applies unanchored excludes while
 			// traversing modules; **/data/**/* still prunes gcp-metadata and
