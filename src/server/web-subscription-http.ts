@@ -1,19 +1,18 @@
 import { NATIVE_SUBSCRIPTIONS } from "../core/contracts/subscriptions.ts";
+import { requestAddressedOrigin } from "./same-origin.ts";
 import { webSubscriptionOwner, webSubscriptionsEnabled, webSubscriptionStatus } from "./web-subscriptions.ts";
 
 const HEADERS = { "Cache-Control": "no-store", "Referrer-Policy": "no-referrer", "X-Content-Type-Options": "nosniff" };
 /** Same-origin browser controls, not user authentication. Web/dev deliberately
  * retains the existing shared-server/API-key trust model. Never trust forwarded
- * origins or add CORS grants here. A public deployment needs its own access gate. */
-export function subscriptionRequestOrigin(request: Request): string | undefined {
-	try {
-		const url = new URL(request.url);
-		const host = request.headers.get("host") ?? url.host;
-		const addressed = new URL(`${url.protocol}//${host}`);
-		if (!["http:", "https:"].includes(addressed.protocol) || addressed.username || addressed.password || addressed.pathname !== "/" || addressed.search || addressed.hash) return;
-		return addressed.origin;
-	} catch { return; }
-}
+ * origins or add CORS grants here. A public deployment needs its own access gate.
+ *
+ * The derivation moved to same-origin.ts when the proxy began applying the
+ * same rule to every /api route — one implementation, so the two cannot
+ * drift. These routes keep the STRICTER check below on top of it: they front
+ * OAuth sign-in, so they also demand the custom header (which forces a
+ * preflight) and an explicit Origin on writes. */
+export const subscriptionRequestOrigin = requestAddressedOrigin;
 function authorized(request: Request): boolean {
 	const origin = subscriptionRequestOrigin(request);
 	if (!origin || request.headers.get("x-learnharness-subscriptions") !== "1") return false;
