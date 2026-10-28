@@ -4,6 +4,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { standardFontsDir } from "./pdf-ops";
+import { withDemoCSP } from "../../core/contracts/jobs.ts";
 
 /**
  * Verification engines for sub-agents: demos use the app's own Electron
@@ -143,6 +144,22 @@ export function browserServiceSpawnEnv(
 	return out;
 }
 
+/**
+ * Chrome-fallback launch args (pure; exported for tests). The document this
+ * browser loads is model output, so the renderer sandbox is the last thing
+ * standing between a Chromium renderer bug and code execution on the
+ * learner's machine — `--no-sandbox` is not a flag to ship by default.
+ *
+ * It stays available for the environments that genuinely cannot start the
+ * sandbox (unprivileged containers, some CI images): LH_CHROME_NO_SANDBOX=1
+ * opts back in, loudly and per-deployment, instead of silently for everyone.
+ */
+export function chromeFallbackArgs(env: Record<string, string | undefined>): string[] {
+	const args = ["--disable-gpu", "--disable-dev-shm-usage"];
+	if (env.LH_CHROME_NO_SANDBOX === "1") args.push("--no-sandbox");
+	return args;
+}
+
 /** The helper binary: inside the packaged app the server runs under
  *  ELECTRON_RUN_AS_NODE so process.execPath IS the app binary; in dev
  *  (plain node) the electron package resolves to the dev binary path. */
@@ -263,7 +280,7 @@ async function withBrowserPage<T>(fn: (page: import("puppeteer-core").Page) => P
 		// Explicit path when we found one; otherwise let puppeteer resolve the
 		// system Chrome install itself via the "chrome" channel.
 		...(executablePath ? { executablePath } : { channel: "chrome" as const }),
-		args: ["--disable-gpu", "--no-sandbox", "--disable-dev-shm-usage"],
+		args: chromeFallbackArgs(process.env),
 	});
 	try {
 		const page = await browser.newPage();
@@ -284,7 +301,10 @@ async function runDemo(html: string, opts: RunDemoOptions = {}): Promise<DemoRun
 	const settleMs = opts.settleMs ?? 2000;
 	const dir = tempDir("lh-demo-");
 	const file = path.join(dir, "demo.html");
-	fs.writeFileSync(file, html, "utf-8");
+	// Verification runs the document under the SAME policy the learner's
+	// window applies (contracts/jobs.ts), so a demo that depends on blocked
+	// egress fails here, in front of the builder, instead of shipping.
+	fs.writeFileSync(file, withDemoCSP(html), "utf-8");
 
 	const consoleErrors: string[] = [];
 	const pageErrors: string[] = [];

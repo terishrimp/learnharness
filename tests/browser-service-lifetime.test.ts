@@ -20,7 +20,21 @@ function helperFixture(connected = true, channel = true) {
 	const appReady = new Promise<void>((resolve) => { allowAppReady = resolve; });
 	let allowReadiness!: () => void;
 	const readiness = new Promise<void>((resolve) => { allowReadiness = resolve; });
-	const state = { quits: 0, exits: [] as number[], windows: 0, readinessCalls: 0, stdinReads: 0, signal: undefined as AbortSignal | undefined };
+	const state = {
+		quits: 0, exits: [] as number[], windows: 0, readinessCalls: 0, stdinReads: 0,
+		signal: undefined as AbortSignal | undefined,
+		// The helper's guards (browser-service-window.cjs): this fixture runs
+		// the REAL main.cjs, so it is where the WIRING is pinned — that the
+		// branch installs them at all, before loadURL. Their behavior is
+		// covered in demo-sandbox.test.ts.
+		guards: {
+			navEvents: [] as string[],
+			windowOpen: null as null | (() => { action: string }),
+			permissionRequest: null as null | ((wc: unknown, p: string, cb: (ok: boolean) => void) => void),
+			permissionCheck: null as null | (() => boolean),
+			installedBeforeLoad: false,
+		},
+	};
 	const logs: string[] = [];
 	const errors: string[] = [];
 	// Match Electron 44's Windows override, not a native pipe.
@@ -36,9 +50,26 @@ function helperFixture(connected = true, channel = true) {
 		quit() { state.quits++; }, exit(code: number) { state.exits.push(code); },
 	};
 	class FakeWindow {
+		webContents = {
+			on(name: string) { state.guards.navEvents.push(name); },
+			setWindowOpenHandler(fn: () => { action: string }) { state.guards.windowOpen = fn; },
+		};
 		constructor() { state.windows++; }
-		async loadURL(url: string) { assert.equal(url, "about:blank"); }
+		async loadURL(url: string) {
+			assert.equal(url, "about:blank");
+			// Agent HTML must never reach a window whose guards came late.
+			state.guards.installedBeforeLoad =
+				state.guards.permissionRequest !== null && state.guards.windowOpen !== null;
+		}
 	}
+	const session = {
+		defaultSession: {
+			setPermissionRequestHandler(fn: (wc: unknown, p: string, cb: (ok: boolean) => void) => void) {
+				state.guards.permissionRequest = fn;
+			},
+			setPermissionCheckHandler(fn: () => boolean) { state.guards.permissionCheck = fn; },
+		},
+	};
 	const net = {
 		createServer: () => Object.assign(new EventEmitter(), {
 			listen(_port: number, _host: string, callback: () => void) { callback(); },
@@ -55,7 +86,7 @@ function helperFixture(connected = true, channel = true) {
 		});
 	};
 	runInNewContext(mainSource, {
-		require: (id: string) => id === "electron" ? { app, BrowserWindow: FakeWindow }
+		require: (id: string) => id === "electron" ? { app, BrowserWindow: FakeWindow, session }
 			: id === "node:net" ? net
 			: id === "./browser-service-readiness.cjs" ? { waitForBrowserService }
 			: requireMain(id),
@@ -84,6 +115,19 @@ describe("browser-service IPC-owned lifetime", () => {
 		await turn();
 		assert.deepEqual(helper.logs, ["BROWSER_SERVICE_CDP 54321"]);
 		assert.deepEqual(helper.state.exits, []);
+
+		// The helper renders agent-authored HTML and never reaches
+		// createWindow()'s posture, so the branch must install its own —
+		// before the window loads anything.
+		const guards = helper.state.guards;
+		assert.equal(guards.installedBeforeLoad, true, "guards precede the first load");
+		assert.deepEqual(guards.navEvents, ["will-navigate", "will-frame-navigate"]);
+		assert.deepEqual(guards.windowOpen!(), { action: "deny" });
+		assert.equal(guards.permissionCheck!(), false);
+		let granted: boolean | undefined;
+		guards.permissionRequest!(null, "media", (ok) => { granted = ok; });
+		assert.equal(granted, false, "Electron's no-handler default would GRANT this");
+
 		helper.disconnect();
 		assert.equal(helper.state.quits, 1);
 	});

@@ -77,6 +77,7 @@ function serverEntry() {
 // helper owns no user data at all.
 if (process.argv.includes("--browser-service")) {
 	const { waitForBrowserService } = require("./browser-service-readiness.cjs");
+	const { applyBrowserServiceGuards } = require("./browser-service-window.cjs");
 	// Own the helper's entire startup lifetime, including the readiness wait.
 	const lifetime = new AbortController();
 	const parentClosed = () => {
@@ -97,6 +98,11 @@ if (process.argv.includes("--browser-service")) {
 			// A hidden window keeps the app lifecycle ordinary on every
 			// platform (no window-all-closed handler is installed here).
 			const win = new BrowserWindow({ show: false });
+			// This helper renders agent-authored demo HTML, and it never
+			// reaches createWindow()'s posture (the branch above returns
+			// before main()). Without these, Electron's no-handler default
+			// GRANTS permission requests — in an invisible window.
+			applyBrowserServiceGuards({ win, session: session.defaultSession });
 			await win.loadURL("about:blank");
 			// Window load is not a DevTools HTTP readiness barrier. Confirm the
 			// endpoint before both production and smoke clients see the handshake.
